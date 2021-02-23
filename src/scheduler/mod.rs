@@ -188,7 +188,8 @@ impl<'a, R: 'a + Resource + Send + Sync> Scheduler<R> {
     }
 
     /// Schedule `task_function` and return a `Future` for the value.
-    pub fn schedule_future<F: 'static, T: 'static>(
+    // TODO: use old future version
+    /*pub fn schedule_future<F: 'static, T: 'static>(
         &mut self,
         priority: usize,
         name: &str,
@@ -216,7 +217,7 @@ impl<'a, R: 'a + Resource + Send + Sync> Scheduler<R> {
             is_preemptible,
         )?;
         Ok(rx)
-    }
+    }*/
 
     pub fn stop(&self) -> Result<(), mpsc::SendError<Control>> {
         if let Some(c) = self.control_chan.as_ref() {
