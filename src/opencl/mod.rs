@@ -1,10 +1,10 @@
 mod error;
 mod utils;
 
-pub use error::*;
-use sha2::{Digest, Sha256};
-use std::fmt::Write;
+use std::fmt;
 use std::hash::{Hash, Hasher};
+
+pub use error::{GPUError, GPUResult};
 
 pub type BusId = u32;
 
@@ -19,16 +19,25 @@ pub enum Brand {
 }
 
 impl Brand {
-    pub fn platform_name(&self) -> &'static str {
-        match self {
+    /// Returns a brand by name if it exists
+    fn by_name(name: &str) -> Option<Self> {
+        match name {
+            "NVIDIA CUDA" => Some(Self::Nvidia),
+            "AMD Accelerated Parallel Processing" => Some(Self::Amd),
+            "Apple" => Some(Self::Apple),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Brand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let brand = match self {
             Brand::Nvidia => "NVIDIA CUDA",
             Brand::Amd => "AMD Accelerated Parallel Processing",
             Brand::Apple => "Apple",
-        }
-    }
-
-    fn all() -> Vec<Brand> {
-        vec![Brand::Nvidia, Brand::Amd, Brand::Apple]
+        };
+        write!(f, "{}", brand)
     }
 }
 
@@ -114,27 +123,19 @@ impl Device {
         self.memory
     }
     pub fn is_little_endian(&self) -> GPUResult<bool> {
-        Ok(utils::is_little_endian(self.device)?)
+        utils::is_little_endian(self.device)
     }
     pub fn bus_id(&self) -> Option<BusId> {
         self.bus_id
     }
 
-    /// Return all available GPU devices of supported brands, ordered by brand as
-    /// defined by `Brand::all()`.
+    /// Return all available GPU devices of supported brands.
     pub fn all() -> Vec<&'static Device> {
         Self::all_iter().collect()
     }
 
-    pub fn all_iter() -> impl Iterator<Item = &'static Device> {
-        Brand::all()
-            .into_iter()
-            .filter_map(|brand| utils::DEVICES.get(&brand))
-            .flatten()
-    }
-
     pub fn by_bus_id(bus_id: BusId) -> GPUResult<&'static Device> {
-        Device::all_iter()
+        Self::all_iter()
             .find(|d| match d.bus_id {
                 Some(id) => bus_id == id,
                 None => false,
@@ -142,15 +143,16 @@ impl Device {
             .ok_or(GPUError::DeviceNotFound)
     }
 
-    pub fn by_brand(brand: Brand) -> Option<&'static Vec<Device>> {
-        utils::DEVICES.get(&brand)
-    }
-
     pub fn cl_device_id(&self) -> ocl::ffi::cl_device_id {
         self.device.as_core().as_raw()
     }
+
+    fn all_iter() -> impl Iterator<Item = &'static Device> {
+        utils::DEVICES.iter()
+    }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy)]
 pub enum GPUSelector {
     BusId(u32),
@@ -167,7 +169,7 @@ impl GPUSelector {
 
     pub fn get_device(&self) -> Option<&'static Device> {
         match self {
-            GPUSelector::BusId(bus_id) => Device::all_iter().find(|d| d.bus_id == Some(*bus_id)),
+            GPUSelector::BusId(bus_id) => Device::by_bus_id(*bus_id).ok(),
             GPUSelector::Index(index) => get_device_by_index(*index),
         }
     }
@@ -196,15 +198,6 @@ fn get_device_bus_id_by_index(index: usize) -> Option<BusId> {
 
 fn get_device_by_index(index: usize) -> Option<&'static Device> {
     Device::all_iter().nth(index)
-}
-
-pub fn get_memory(d: ocl::Device) -> GPUResult<u64> {
-    match d.info(ocl::enums::DeviceInfo::GlobalMemSize)? {
-        ocl::enums::DeviceInfoResult::GlobalMemSize(sz) => Ok(sz),
-        _ => Err(GPUError::DeviceInfoNotAvailable(
-            ocl::enums::DeviceInfo::GlobalMemSize,
-        )),
-    }
 }
 
 pub struct Program {
@@ -291,7 +284,7 @@ impl Program {
             } else {
                 curr -= step;
             }
-            step = step / 2;
+            step /= 2;
         }
         self.create_buffer::<T>(n)
     }
@@ -322,7 +315,7 @@ impl<'a, T> KernelArgument<'a> for &'a Buffer<T> {
 
 impl<T: ocl::OclPrm> KernelArgument<'_> for T {
     fn push(&self, kernel: &mut Kernel) {
-        kernel.builder.arg(self.clone());
+        kernel.builder.arg(*self);
     }
 }
 
@@ -377,7 +370,7 @@ macro_rules! call_kernel {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use super::Device;
 
     #[test]
     fn test_device_all() {
